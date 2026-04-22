@@ -1,11 +1,10 @@
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 from contextlib import asynccontextmanager
 
@@ -41,25 +40,9 @@ app.middleware("http")(protect_ops_request)
 # (NestJS). BE chỉ còn đọc dữ liệu đã được API ghi xuống DB để phục vụ Admin/FE.
 
 
-class ProviderPatch(BaseModel):
-    isActive: Optional[bool] = None
-    timeoutSeconds: Optional[int] = Field(default=None, ge=1)
-    rateLimitPerMinute: Optional[int] = Field(default=None, ge=1)
-    config: Optional[Dict[str, Any]] = None
-
-
-class EndpointPatch(BaseModel):
-    isActive: Optional[bool] = None
-    scheduleExpression: Optional[str] = None
-    parserKey: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
-
-
-class SourceBindingPatch(BaseModel):
-    isEnabled: Optional[bool] = None
-    priority: Optional[int] = Field(default=None, ge=0)
-    validTo: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
+# Pydantic models ProviderPatch / EndpointPatch / SourceBindingPatch đã gỡ
+# cùng với các endpoint tương ứng (Phase 5). Admin UI gọi thẳng
+# air-quality-api cho nhóm này.
 
 
 def is_analytics_enabled() -> bool:
@@ -77,268 +60,25 @@ async def get_health():
     }
 
 
-@app.get("/api/v1/ops/providers")
-async def get_providers():
-    rows = await fetch(
-        """
-        SELECT
-          sp.id::text,
-          sp.code,
-          sp.name,
-          sp.category,
-          sp.base_url AS "baseUrl",
-          sp.auth_type AS "authType",
-          sp.rate_limit_per_minute AS "rateLimitPerMinute",
-          sp.timeout_seconds AS "timeoutSeconds",
-          sp.is_active AS "isActive",
-          COALESCE(last_payload.fetched_at, last_run.finished_at, last_run.started_at, sp.updated_at, sp.created_at) AS "lastFetchedAt",
-          last_run.started_at AS "lastRunAt",
-          last_run.status::text AS "lastRunStatus"
-        FROM ingest.source_providers sp
-        LEFT JOIN LATERAL (
-          SELECT
-            pr.started_at,
-            pr.finished_at,
-            pr.status
-          FROM ingest.outbound_requests req
-          JOIN ingest.pipeline_runs pr ON pr.id = req.pipeline_run_id
-          WHERE req.source_provider_id = sp.id
-          ORDER BY pr.started_at DESC
-          LIMIT 1
-        ) last_run ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT fetched_at
-          FROM ingest.raw_payloads rp
-          WHERE rp.source_provider_id = sp.id
-          ORDER BY fetched_at DESC
-          LIMIT 1
-        ) last_payload ON TRUE
-        ORDER BY sp.code
-        """
-    )
-    return rows or []
-
-
-@app.patch("/api/v1/ops/providers/{provider_id}")
-async def update_provider(provider_id: str, payload: ProviderPatch):
-    rows = await fetch(
-        """
-        UPDATE ingest.source_providers
-        SET
-          is_active = COALESCE($2, is_active),
-          timeout_seconds = COALESCE($3, timeout_seconds),
-          rate_limit_per_minute = COALESCE($4, rate_limit_per_minute),
-          config = CASE
-            WHEN $5::jsonb IS NULL THEN config
-            ELSE config || $5::jsonb
-          END,
-          updated_at = now()
-        WHERE id = $1::uuid
-        RETURNING
-          id::text,
-          code,
-          name,
-          category,
-          base_url AS "baseUrl",
-          auth_type AS "authType",
-          rate_limit_per_minute AS "rateLimitPerMinute",
-          timeout_seconds AS "timeoutSeconds",
-          is_active AS "isActive",
-          updated_at AS "lastFetchedAt",
-          updated_at AS "lastRunAt",
-          NULL::text AS "lastRunStatus"
-        """,
-        provider_id,
-        payload.isActive,
-        payload.timeoutSeconds,
-        payload.rateLimitPerMinute,
-        payload.config,
-    )
-    if rows:
-        return rows[0]
-    raise HTTPException(status_code=404, detail="Provider not found")
-
-
-@app.get("/api/v1/ops/endpoints")
-async def get_endpoints():
-    rows = await fetch(
-        """
-        SELECT
-          se.id::text,
-          sp.code AS "providerCode",
-          se.code,
-          se.name,
-          se.kind::text AS kind,
-          se.http_method AS "httpMethod",
-          se.path,
-          se.schedule_expression AS "scheduleExpression",
-          se.parser_key AS "parserKey",
-          se.is_active AS "isActive",
-          se.updated_at AS "updatedAt"
-        FROM ingest.source_endpoints se
-        JOIN ingest.source_providers sp ON sp.id = se.provider_id
-        ORDER BY sp.code, se.code
-        """
-    )
-    return rows or []
-
-
-@app.patch("/api/v1/ops/endpoints/{endpoint_id}")
-async def update_endpoint(endpoint_id: str, payload: EndpointPatch):
-    rows = await fetch(
-        """
-        UPDATE ingest.source_endpoints
-        SET
-          is_active = COALESCE($2, is_active),
-          schedule_expression = COALESCE($3, schedule_expression),
-          parser_key = COALESCE($4, parser_key),
-          config = CASE
-            WHEN $5::jsonb IS NULL THEN config
-            ELSE config || $5::jsonb
-          END,
-          updated_at = now()
-        WHERE id = $1::uuid
-        RETURNING
-          id::text,
-          (SELECT code FROM ingest.source_providers WHERE id = provider_id) AS "providerCode",
-          code,
-          name,
-          kind::text AS kind,
-          http_method AS "httpMethod",
-          path,
-          schedule_expression AS "scheduleExpression",
-          parser_key AS "parserKey",
-          is_active AS "isActive",
-          updated_at AS "updatedAt"
-        """,
-        endpoint_id,
-        payload.isActive,
-        payload.scheduleExpression,
-        payload.parserKey,
-        payload.config,
-    )
-    if rows:
-        return rows[0]
-    raise HTTPException(status_code=404, detail="Endpoint not found")
-
-
-@app.get("/api/v1/ops/source-bindings")
-async def get_source_bindings():
-    rows = await fetch(
-        """
-        SELECT
-          ssb.id::text,
-          s.id::text AS "stationId",
-          s.name AS "stationName",
-          sp.code AS "providerCode",
-          se.code AS "endpointCode",
-          ssb.external_object_id AS "externalObjectId",
-          ssb.priority,
-          ssb.is_enabled AS "isEnabled",
-          ssb.valid_from AS "validFrom",
-          ssb.valid_to AS "validTo",
-          ssb.updated_at AS "updatedAt"
-        FROM ingest.station_source_bindings ssb
-        JOIN catalog.stations s ON s.id = ssb.station_id
-        JOIN ingest.source_endpoints se ON se.id = ssb.endpoint_id
-        JOIN ingest.source_providers sp ON sp.id = se.provider_id
-        ORDER BY s.name, ssb.priority, se.code
-        """
-    )
-    return rows or []
-
-
-@app.patch("/api/v1/ops/source-bindings/{binding_id}")
-async def update_source_binding(binding_id: str, payload: SourceBindingPatch):
-    rows = await fetch(
-        """
-        UPDATE ingest.station_source_bindings
-        SET
-          is_enabled = COALESCE($2, is_enabled),
-          priority = COALESCE($3, priority),
-          valid_to = COALESCE($4::timestamptz, valid_to),
-          config = CASE
-            WHEN $5::jsonb IS NULL THEN config
-            ELSE config || $5::jsonb
-          END,
-          updated_at = now()
-        WHERE id = $1::uuid
-        RETURNING
-          id::text,
-          (SELECT s.id::text FROM catalog.stations s WHERE s.id = station_id) AS "stationId",
-          (SELECT s.name FROM catalog.stations s WHERE s.id = station_id) AS "stationName",
-          (SELECT sp.code
-           FROM ingest.source_endpoints se
-           JOIN ingest.source_providers sp ON sp.id = se.provider_id
-           WHERE se.id = endpoint_id) AS "providerCode",
-          (SELECT se.code FROM ingest.source_endpoints se WHERE se.id = endpoint_id) AS "endpointCode",
-          external_object_id AS "externalObjectId",
-          priority,
-          is_enabled AS "isEnabled",
-          valid_from AS "validFrom",
-          valid_to AS "validTo",
-          updated_at AS "updatedAt"
-        """,
-        binding_id,
-        payload.isEnabled,
-        payload.priority,
-        payload.validTo,
-        payload.config,
-    )
-    if rows:
-        return rows[0]
-    raise HTTPException(status_code=404, detail="Source binding not found")
-
-
-@app.get("/api/v1/ops/pipeline-runs")
-async def get_pipeline_runs():
-    rows = await fetch(
-        """
-        SELECT
-          overview.id::text,
-          overview.pipeline_code AS "pipelineCode",
-          overview.status::text AS status,
-          overview.trigger_type AS "triggerType",
-          overview.started_at AS "startedAt",
-          overview.finished_at AS "finishedAt",
-          overview.endpoint_code AS "endpointCode",
-          overview.error_summary AS "errorSummary",
-          COALESCE(req.request_count, 0) AS "requestCount",
-          COALESCE(payloads.payload_count, 0) AS "payloadCount",
-          COALESCE(norm.normalize_count, 0) AS "normalizeCount",
-          COALESCE(analysis.analysis_count, 0) AS "analysisCount",
-          COALESCE(pred.prediction_count, 0) AS "predictionCount"
-        FROM ops.v_pipeline_run_overview overview
-        LEFT JOIN LATERAL (
-          SELECT COUNT(*)::int AS request_count
-          FROM ingest.outbound_requests req
-          WHERE req.pipeline_run_id = overview.id
-        ) req ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT COUNT(*)::int AS payload_count
-          FROM ingest.raw_payloads payload
-          WHERE payload.pipeline_run_id = overview.id
-        ) payloads ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT COUNT(*)::int AS normalize_count
-          FROM ingest.normalize_runs nr
-          WHERE nr.pipeline_run_id = overview.id
-        ) norm ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT COUNT(*)::int AS analysis_count
-          FROM analytics.analysis_runs ar
-          WHERE ar.pipeline_run_id = overview.id
-        ) analysis ON TRUE
-        LEFT JOIN LATERAL (
-          SELECT COUNT(*)::int AS prediction_count
-          FROM forecast.prediction_runs pr
-          WHERE pr.pipeline_run_id = overview.id
-        ) pred ON TRUE
-        ORDER BY overview.started_at DESC
-        LIMIT 50
-        """
-    )
-    return rows or []
+# ============================================================
+# Phase 5: các endpoint providers / endpoints / source-bindings /
+# pipeline-runs ĐÃ ĐƯỢC CHUYỂN HOÀN TOÀN sang air-quality-api.
+# Admin UI nay gọi thẳng:
+#   GET  /api/v1/ingest/providers
+#   PATCH /api/v1/ingest/providers/{id}
+#   GET  /api/v1/ingest/endpoints
+#   PATCH /api/v1/ingest/endpoints/{id}
+#   GET  /api/v1/ingest/source-bindings
+#   PATCH /api/v1/ingest/source-bindings/{id}
+#   GET  /api/v1/ingest/pipeline-runs
+# của air-quality-api (NestJS).
+#
+# be chỉ còn giữ 3 resource thuộc phạm vi analytics/forecast:
+#   /api/v1/ops/model-versions
+#   /api/v1/ops/predictions
+#   /api/v1/ops/lineage
+# (sẽ rename sang /api/v1/analytics/* ở iteration sau).
+# ============================================================
 
 
 @app.get("/api/v1/ops/model-versions")
