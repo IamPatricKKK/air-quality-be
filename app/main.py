@@ -1,26 +1,32 @@
+import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from contextlib import asynccontextmanager
+
+from app.auth import protect_ops_request
 from app.db import fetch
-from app.mock_data import (
-    endpoints,
-    lineage,
-    model_versions,
-    patch_endpoint,
-    patch_provider,
-    patch_source_binding,
-    pipeline_runs,
-    predictions,
-    providers,
-    source_bindings,
-)
+from app.analytics.router import router as analytics_router
+from app.analytics.scheduler import start_analytics_scheduler, stop_analytics_scheduler
 
 
-app = FastAPI(title="air-quality-be", version="0.1.0")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    start_analytics_scheduler()
+    yield
+    stop_analytics_scheduler()
+
+
+app = FastAPI(title="air-quality-be", version="0.2.0", lifespan=lifespan)
+app.include_router(analytics_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,6 +34,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.middleware("http")(protect_ops_request)
+
+
+# NOTE: Ingest (thu thập dữ liệu Open-Meteo) đã được chuyển sang air-quality-api
+# (NestJS). BE chỉ còn đọc dữ liệu đã được API ghi xuống DB để phục vụ Admin/FE.
 
 
 class ProviderPatch(BaseModel):
@@ -51,12 +62,18 @@ class SourceBindingPatch(BaseModel):
     config: Optional[Dict[str, Any]] = None
 
 
+def is_analytics_enabled() -> bool:
+    return os.getenv("ANALYTICS_ENABLED", "true").strip().lower() not in ("0", "false", "off", "no")
+
+
 @app.get("/api/v1/health")
 async def get_health():
     return {
         "service": "air-quality-be",
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "analyticsEnabled": is_analytics_enabled(),
+        "version": app.version,
     }
 
 
@@ -99,9 +116,7 @@ async def get_providers():
         ORDER BY sp.code
         """
     )
-    if rows is not None:
-        return rows
-    return providers
+    return rows or []
 
 
 @app.patch("/api/v1/ops/providers/{provider_id}")
@@ -141,17 +156,6 @@ async def update_provider(provider_id: str, payload: ProviderPatch):
     )
     if rows:
         return rows[0]
-
-    patched = patch_provider(
-        provider_id,
-        {
-            "isActive": payload.isActive,
-            "timeoutSeconds": payload.timeoutSeconds,
-            "rateLimitPerMinute": payload.rateLimitPerMinute,
-        },
-    )
-    if patched is not None:
-        return patched
     raise HTTPException(status_code=404, detail="Provider not found")
 
 
@@ -176,9 +180,7 @@ async def get_endpoints():
         ORDER BY sp.code, se.code
         """
     )
-    if rows is not None:
-        return rows
-    return endpoints
+    return rows or []
 
 
 @app.patch("/api/v1/ops/endpoints/{endpoint_id}")
@@ -217,17 +219,6 @@ async def update_endpoint(endpoint_id: str, payload: EndpointPatch):
     )
     if rows:
         return rows[0]
-
-    patched = patch_endpoint(
-        endpoint_id,
-        {
-            "isActive": payload.isActive,
-            "scheduleExpression": payload.scheduleExpression,
-            "parserKey": payload.parserKey,
-        },
-    )
-    if patched is not None:
-        return patched
     raise HTTPException(status_code=404, detail="Endpoint not found")
 
 
@@ -254,9 +245,7 @@ async def get_source_bindings():
         ORDER BY s.name, ssb.priority, se.code
         """
     )
-    if rows is not None:
-        return rows
-    return source_bindings
+    return rows or []
 
 
 @app.patch("/api/v1/ops/source-bindings/{binding_id}")
@@ -298,17 +287,6 @@ async def update_source_binding(binding_id: str, payload: SourceBindingPatch):
     )
     if rows:
         return rows[0]
-
-    patched = patch_source_binding(
-        binding_id,
-        {
-            "isEnabled": payload.isEnabled,
-            "priority": payload.priority,
-            "validTo": payload.validTo,
-        },
-    )
-    if patched is not None:
-        return patched
     raise HTTPException(status_code=404, detail="Source binding not found")
 
 
@@ -360,9 +338,7 @@ async def get_pipeline_runs():
         LIMIT 50
         """
     )
-    if rows is not None:
-        return rows
-    return pipeline_runs
+    return rows or []
 
 
 @app.get("/api/v1/ops/model-versions")
@@ -382,9 +358,7 @@ async def get_model_versions():
         ORDER BY mv.created_at DESC
         """
     )
-    if rows is not None:
-        return rows
-    return model_versions
+    return rows or []
 
 
 @app.get("/api/v1/ops/predictions")
@@ -405,9 +379,7 @@ async def get_predictions():
         LIMIT 100
         """
     )
-    if rows is not None:
-        return rows
-    return predictions
+    return rows or []
 
 
 @app.get("/api/v1/ops/lineage")
@@ -467,9 +439,14 @@ async def get_lineage(
         station_id,
         limit,
     )
-    if rows is not None:
-        return rows
+    return rows or []
 
-    if station_id:
-        return [item for item in lineage if item["stationId"] == station_id][:limit]
-    return lineage[:limit]
+
+@app.post("/api/v1/ops/live-sync")
+async def trigger_live_data_sync_deprecated():
+    # Endpoint được giữ tạm thời để tránh vỡ Admin UI cũ.
+    # Admin mới nên gọi air-quality-api: POST /api/v1/ingest/run
+    raise HTTPException(
+        status_code=410,
+        detail="Moved: please call air-quality-api POST /api/v1/ingest/run",
+    )

@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-sky_pulse}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/seed.bootstrap.sql:/docker-entrypoint-initdb.d/02-seed.bootstrap.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sky_pulse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  be:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-8000}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-sky_pulse}
+      JWKS_URL: ${JWKS_URL_DOCKER:-http://host.docker.internal:3002/api/v1/.well-known/jwks.json}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${PORT:-8000}:8000"
+
+volumes:
+  postgres_data:

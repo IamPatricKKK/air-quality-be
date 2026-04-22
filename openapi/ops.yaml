@@ -14,60 +14,94 @@ paths:
   /ops/providers:
     get:
       summary: List configured external providers
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Provider list
   /ops/providers/{providerId}:
     patch:
       summary: Update provider runtime settings
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Provider updated
   /ops/endpoints:
     get:
       summary: List external endpoints
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Endpoint list
   /ops/endpoints/{endpointId}:
     patch:
       summary: Update endpoint runtime settings
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Endpoint updated
   /ops/source-bindings:
     get:
       summary: List station to endpoint bindings
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Binding list
   /ops/source-bindings/{bindingId}:
     patch:
       summary: Update station source binding
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Binding updated
   /ops/pipeline-runs:
     get:
       summary: List recent pipeline runs
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Pipeline run list
+  /ops/live-sync:
+    post:
+      summary: Trigger a live Open-Meteo ingest run
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Live sync summary
   /ops/lineage:
     get:
       summary: Trace latest source to analysis and prediction lineage
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Lineage list
   /ops/model-versions:
     get:
       summary: List model versions
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Model versions
   /ops/predictions:
     get:
       summary: List predictions
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Predictions
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

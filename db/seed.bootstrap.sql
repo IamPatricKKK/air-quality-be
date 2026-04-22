@@ -1,0 +1,1 @@
+-- Seed data removed. Use migration system instead.
