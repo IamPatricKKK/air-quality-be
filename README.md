@@ -1,13 +1,28 @@
 # air-quality-be
 
-FastAPI service cho:
+Service backend **PHỤ** (FastAPI/Python) — ưu tiên thấp, tách biệt khỏi flow chính.
+Nhiệm vụ duy nhất: **phân tích &amp; dự đoán** trên dữ liệu mà `air-quality-api` đã ingest.
 
-- external providers / connectors
-- ingestion pipeline
-- normalize / analytics / forecasting
-- ops observability cho admin
+- Forecasting: Prophet · ARIMA · Linear Regression (horizon 12-24h)
+- Analytics: anomaly detection (z-score + IQR), seasonal patterns, correlation matrix, trend analysis, health impact scoring, daily summaries
+- Scheduler riêng (APScheduler) chạy các job phân tích theo chu kỳ
 
-Repo này đọc trực tiếp từ PostgreSQL schema `sky_pulse` và cung cấp các endpoint vận hành cho `air-quality-admin`.
+Repo này **CHỈ được gọi** từ zone "Phân tích &amp; Dự đoán" của `air-quality-admin` (lazy-loaded route). Nếu be chết, các khu vực khác của hệ thống (FE dashboard, Admin "Vận hành") vẫn hoạt động bình thường.
+
+### Vai trò trong hệ thống
+
+```
+[External APIs] → air-quality-api → PostgreSQL ← air-quality-be
+                        ↓                              ↓
+                       FE                      Admin /analytics zone
+                  + Admin /ops zone                (lazy-loaded)
+```
+
+### Lưu ý về endpoint namespace
+
+- `/api/v1/analytics/*` — endpoint chính, phục vụ admin. Dùng namespace này cho mọi tính năng mới.
+- `/api/v1/ops/*` — **legacy**. Một số endpoint (providers, endpoints, source-bindings, pipeline-runs) logic thuộc `air-quality-api` và sẽ được migrate đi. Chỉ giữ trong be tạm để admin UI cũ không vỡ.
+- `/api/v1/ops/live-sync` — đã gỡ (410 → removed). Gọi `air-quality-api POST /api/v1/ingest/run`.
 
 ## Tech stack
 

@@ -442,11 +442,12 @@ async def get_lineage(
     return rows or []
 
 
-@app.post("/api/v1/ops/live-sync")
-async def trigger_live_data_sync_deprecated():
-    # Endpoint được giữ tạm thời để tránh vỡ Admin UI cũ.
-    # Admin mới nên gọi air-quality-api: POST /api/v1/ingest/run
-    raise HTTPException(
-        status_code=410,
-        detail="Moved: please call air-quality-api POST /api/v1/ingest/run",
-    )
+# NOTE (Phase 4 cleanup):
+# Các endpoint /api/v1/ops/* dưới đây (providers / endpoints / source-bindings /
+# pipeline-runs) logic thuộc về air-quality-api (service chính, sở hữu ingest).
+# Hiện giữ lại để admin UI cũ không vỡ. Khi admin đã migrate sang gọi
+# air-quality-api cho các resource này, toàn bộ block /ops/* SẼ ĐƯỢC XÓA và
+# be sẽ chỉ còn mount /api/v1/analytics/* + /api/v1/health.
+#
+# Endpoint /ops/live-sync (deprecated) đã được gỡ hoàn toàn —
+# admin phải gọi air-quality-api POST /api/v1/ingest/run.
