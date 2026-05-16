@@ -30,7 +30,7 @@ async def compute_seasonal_analysis(target_metric: str = "aqi") -> int:
         target_metric = "aqi"
 
     stations = await fetch(
-        "SELECT id, name FROM catalog.stations WHERE is_active = TRUE"
+        "SELECT id::text AS id, name FROM catalog.stations WHERE is_active = TRUE"
     )
     if not stations:
         return 0

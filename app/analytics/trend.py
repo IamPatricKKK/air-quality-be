@@ -28,7 +28,7 @@ async def compute_trend_analysis() -> int:
     logger.info("Starting trend analysis")
 
     stations = await fetch(
-        "SELECT id, name FROM catalog.stations WHERE is_active = TRUE"
+        "SELECT id::text AS id, name FROM catalog.stations WHERE is_active = TRUE"
     )
     if not stations:
         return 0

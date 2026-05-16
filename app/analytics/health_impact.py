@@ -84,7 +84,7 @@ async def compute_health_impact() -> int:
     logger.info("Starting health impact analysis")
 
     stations = await fetch(
-        "SELECT id, name FROM catalog.stations WHERE is_active = TRUE"
+        "SELECT id::text AS id, name FROM catalog.stations WHERE is_active = TRUE"
     )
     if not stations:
         return 0

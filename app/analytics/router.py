@@ -62,7 +62,7 @@ async def get_daily_summaries(
           ds.category
         FROM analytics.daily_summaries ds
         JOIN catalog.stations s ON s.id = ds.station_id
-        WHERE ds.summary_date > CURRENT_DATE - $1
+        WHERE ds.summary_date > CURRENT_DATE - ($1 * INTERVAL '1 day')
           AND ($2::uuid IS NULL OR ds.station_id = $2::uuid)
         ORDER BY ds.summary_date DESC, s.name
         LIMIT 500

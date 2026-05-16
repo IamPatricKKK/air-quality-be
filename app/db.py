@@ -5,6 +5,7 @@ Provides both:
   - SQLAlchemy async session (for ORM-based code)
 """
 
+import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -59,8 +60,23 @@ async def get_pool() -> Optional[asyncpg.Pool]:
         return None
     normalized_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
     if _pool is None:
-        _pool = await asyncpg.create_pool(normalized_url)
+        _pool = await asyncpg.create_pool(normalized_url, init=_init_connection)
     return _pool
+
+
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """
+    Decode jsonb/json về Python object (asyncpg mặc định trả str).
+    Nếu không set, endpoint analytics (seasonal/correlation/trend...) trả
+    chuỗi JSON thô thay vì object → sai contract với FE.
+    """
+    for typename in ("jsonb", "json"):
+        await conn.set_type_codec(
+            typename,
+            encoder=json.dumps,
+            decoder=json.loads,
+            schema="pg_catalog",
+        )
 
 
 async def fetch(query: str, *args: Any) -> Optional[List[Dict[str, Any]]]:

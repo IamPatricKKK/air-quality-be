@@ -39,8 +39,8 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
         features["rolling_mean_6h"] = df["y"].rolling(6, min_periods=1).mean()
         features["rolling_std_6h"] = df["y"].rolling(6, min_periods=1).std().fillna(0)
         features["rolling_mean_24h"] = df["y"].rolling(24, min_periods=1).mean()
-        features["lag_1h"] = df["y"].shift(1).fillna(method="bfill")
-        features["lag_24h"] = df["y"].shift(24).fillna(method="bfill")
+        features["lag_1h"] = df["y"].shift(1).bfill()
+        features["lag_24h"] = df["y"].shift(24).bfill()
 
     return features.fillna(0)
 

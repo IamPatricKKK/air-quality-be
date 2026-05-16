@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    try:
+        from app.models.ensure import ensure_analytics_tables
+        await ensure_analytics_tables()
+    except Exception as e:  # không chặn startup nếu DDL lỗi
+        import logging
+        logging.getLogger(__name__).error("ensure_analytics_tables failed: %s", e)
     start_analytics_scheduler()
     yield
     stop_analytics_scheduler()

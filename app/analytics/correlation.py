@@ -29,7 +29,7 @@ async def compute_correlation_analysis() -> int:
     logger.info("Starting correlation analysis")
 
     stations = await fetch(
-        "SELECT id, name FROM catalog.stations WHERE is_active = TRUE"
+        "SELECT id::text AS id, name FROM catalog.stations WHERE is_active = TRUE"
     )
     if not stations:
         return 0
