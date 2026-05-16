@@ -182,6 +182,72 @@ async def get_lineage(
     return rows or []
 
 
+# ─── Grid management (admin only — protected by /ops middleware) ─────────
+
+@app.post("/api/v1/ops/grid/refresh")
+async def trigger_grid_refresh():
+    """
+    Force chạy grid ingest ngay, không chờ cron (mặc định 3h/lần).
+    Mất ~45-60s để fetch 701 điểm từ Open-Meteo.
+    Admin/operator role required (protected bởi protect_ops_request middleware).
+    """
+    try:
+        from app.grid_ingest.openmeteo_grid import run_grid_ingest
+        stats = await run_grid_ingest()
+        return {"ok": True, **stats}
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Grid refresh failed: {exc!r}")
+
+
+@app.get("/api/v1/ops/grid/health")
+async def grid_health():
+    """
+    Trạng thái sức khỏe grid cho admin: bao nhiêu điểm fresh, stale, by source.
+    Khác /api/v1/analytics/grid/stats (public): endpoint này có thể mở rộng
+    thêm metrics nội bộ trong tương lai (latency, error rate, cost).
+    """
+    rows = await fetch(
+        """
+        WITH point_status AS (
+            SELECT
+              g.id,
+              g.province_name,
+              o_latest.observed_at,
+              o_latest.aqi,
+              CASE
+                WHEN o_latest.observed_at IS NULL THEN 'no_data'
+                WHEN o_latest.observed_at > now() - interval '6 hours' THEN 'fresh'
+                WHEN o_latest.observed_at > now() - interval '24 hours' THEN 'stale'
+                ELSE 'expired'
+              END AS status
+            FROM catalog.grid_points g
+            LEFT JOIN LATERAL (
+              SELECT observed_at, aqi
+              FROM analytics.grid_aqi_observations o
+              WHERE o.grid_point_id = g.id
+              ORDER BY observed_at DESC
+              LIMIT 1
+            ) o_latest ON TRUE
+            WHERE g.is_active = TRUE AND g.is_land = TRUE
+        )
+        SELECT status, COUNT(*) AS n
+        FROM point_status
+        GROUP BY status
+        """
+    )
+    status_map = {r["status"]: r["n"] for r in (rows or [])}
+    return {
+        "fresh": status_map.get("fresh", 0),
+        "stale": status_map.get("stale", 0),
+        "expired": status_map.get("expired", 0),
+        "no_data": status_map.get("no_data", 0),
+        "total": sum(status_map.values()),
+    }
+
+
 # NOTE (Phase 4 cleanup):
 # Các endpoint /api/v1/ops/* dưới đây (providers / endpoints / source-bindings /
 # pipeline-runs) logic thuộc về air-quality-api (service chính, sở hữu ingest).

@@ -113,6 +113,18 @@ async def _run_health_impact():
         logger.error("[Scheduler] Health impact failed: %s", e)
 
 
+async def _run_grid_ingest():
+    from app.grid_ingest.openmeteo_grid import run_grid_ingest
+    try:
+        stats = await run_grid_ingest()
+        logger.info(
+            "[Scheduler] Grid ingest done — total=%d, fetched=%d, inserted=%d",
+            stats["total"], stats["fetched"], stats["inserted"],
+        )
+    except Exception as e:
+        logger.error("[Scheduler] Grid ingest failed: %s", e)
+
+
 def start_analytics_scheduler():
     """Khởi động scheduler. Gọi 1 lần trong app startup."""
     if os.environ.get("ANALYTICS_ENABLED", "true").lower() != "true":
@@ -202,14 +214,23 @@ def start_analytics_scheduler():
         replace_existing=True,
     )
 
+    # Grid ingest — mỗi 3 giờ (phút 5 để tránh đụng anomaly ở phút 0)
+    grid_cron = os.environ.get("GRID_INGEST_CRON", "5 */3 * * *")
+    scheduler.add_job(
+        _run_grid_ingest,
+        CronTrigger.from_crontab(grid_cron),
+        id="grid_ingest",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
         "Analytics scheduler started with %d jobs: "
         "summary=%s, anomaly=%s, prophet=%s, arima=%s, linear=%s, "
-        "seasonal=%s, correlation=%s, trend=%s, health=%s",
+        "seasonal=%s, correlation=%s, trend=%s, health=%s, grid=%s",
         len(scheduler.get_jobs()),
         summary_cron, anomaly_cron, prophet_cron, arima_cron, linear_cron,
-        seasonal_cron, correlation_cron, trend_cron, health_cron,
+        seasonal_cron, correlation_cron, trend_cron, health_cron, grid_cron,
     )
 
 

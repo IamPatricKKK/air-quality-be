@@ -473,6 +473,134 @@ async def trigger_health_impact():
     return {"ok": True, "stations_processed": count}
 
 
+# ---------- Grid AQI (phủ toàn VN qua Open-Meteo CAMS) ----------
+
+
+@router.get("/grid/latest")
+async def get_grid_latest(
+    bounds: Optional[str] = Query(
+        default=None,
+        description="Bounding box 'lat_min,lng_min,lat_max,lng_max'",
+    ),
+    province: Optional[str] = Query(
+        default=None,
+        description="Lọc theo province_code (vd: 'hanoi', 'khanhhoa')",
+    ),
+    max_age_hours: int = Query(
+        default=12,
+        ge=1,
+        le=72,
+        description="Chỉ trả điểm có data trong N giờ gần đây",
+    ),
+):
+    """
+    Trả AQI mới nhất cho mỗi grid point trong bounding box hoặc tỉnh.
+    Mỗi grid point có 1 observation duy nhất (latest theo observed_at).
+    Dùng cho FE để render heatmap surface phủ toàn VN.
+    """
+    where_clauses = ["g.is_active = TRUE", "g.is_land = TRUE"]
+    params: list = []
+
+    if bounds:
+        try:
+            parts = [float(x) for x in bounds.split(",")]
+            if len(parts) != 4:
+                raise ValueError()
+            lat_min, lng_min, lat_max, lng_max = parts
+        except (ValueError, TypeError):
+            raise HTTPException(400, "bounds phải có dạng 'lat_min,lng_min,lat_max,lng_max'")
+
+        params.extend([lat_min, lat_max, lng_min, lng_max])
+        where_clauses.append(
+            f"g.lat BETWEEN ${len(params) - 3} AND ${len(params) - 2}"
+        )
+        where_clauses.append(
+            f"g.lng BETWEEN ${len(params) - 1} AND ${len(params)}"
+        )
+
+    if province:
+        params.append(province)
+        where_clauses.append(f"g.province_code = ${len(params)}")
+
+    where_sql = " AND ".join(where_clauses)
+
+    query = f"""
+        SELECT DISTINCT ON (g.id)
+            g.id::text          AS id,
+            g.lat,
+            g.lng,
+            g.province_code,
+            g.province_name,
+            o.aqi,
+            o.pm25,
+            o.pm10,
+            o.observed_at,
+            o.source_code,
+            o.confidence_score
+        FROM catalog.grid_points g
+        LEFT JOIN analytics.grid_aqi_observations o
+          ON o.grid_point_id = g.id
+         AND o.observed_at > now() - interval '{max_age_hours} hours'
+        WHERE {where_sql}
+        ORDER BY g.id, o.observed_at DESC
+    """
+
+    rows = await fetch(query, *params)
+    out = []
+    for r in rows:
+        if r["aqi"] is None:
+            # Grid point chưa có observation trong window → bỏ qua
+            continue
+        out.append({
+            "id": r["id"],
+            "lat": float(r["lat"]),
+            "lng": float(r["lng"]),
+            "province_code": r["province_code"],
+            "province_name": r["province_name"],
+            "aqi": r["aqi"],
+            "pm25": float(r["pm25"]) if r["pm25"] is not None else None,
+            "pm10": float(r["pm10"]) if r["pm10"] is not None else None,
+            "observed_at": r["observed_at"].isoformat() if r["observed_at"] else None,
+            "source_code": r["source_code"],
+            "confidence_score": float(r["confidence_score"]) if r["confidence_score"] is not None else None,
+        })
+    return {"count": len(out), "data": out}
+
+
+@router.get("/grid/stats")
+async def get_grid_stats():
+    """Tổng quan grid coverage cho admin: total, fresh, stale, by source."""
+    total_row = await fetchrow(
+        "SELECT COUNT(*) AS n FROM catalog.grid_points WHERE is_active = TRUE AND is_land = TRUE"
+    )
+    fresh_row = await fetchrow("""
+        SELECT COUNT(DISTINCT grid_point_id) AS n
+        FROM analytics.grid_aqi_observations
+        WHERE observed_at > now() - interval '6 hours'
+    """)
+    by_source_rows = await fetch("""
+        SELECT source_code, COUNT(*) AS n,
+               MIN(observed_at) AS first_at,
+               MAX(observed_at) AS last_at
+        FROM analytics.grid_aqi_observations
+        GROUP BY source_code
+        ORDER BY n DESC
+    """)
+    return {
+        "total_grid_points": total_row["n"] if total_row else 0,
+        "fresh_within_6h": fresh_row["n"] if fresh_row else 0,
+        "by_source": [
+            {
+                "source_code": r["source_code"],
+                "count": r["n"],
+                "first_at": r["first_at"].isoformat() if r["first_at"] else None,
+                "last_at": r["last_at"].isoformat() if r["last_at"] else None,
+            }
+            for r in by_source_rows
+        ],
+    }
+
+
 @router.post("/run/all")
 async def trigger_all_analytics(metric: str = Query(default="aqi")):
     """Chạy tất cả analytics jobs thủ công."""
