@@ -125,6 +125,37 @@ async def _run_grid_ingest():
         logger.error("[Scheduler] Grid ingest failed: %s", e)
 
 
+async def _run_grid_fusion():
+    from app.grid_fusion.fuser import run_grid_fusion
+    try:
+        stats = await run_grid_fusion()
+        logger.info(
+            "[Scheduler] Grid fusion done — grid=%d, stations=%d, fused=%d, updated=%d",
+            stats["grid_points"], stats["with_station"],
+            stats["fused"], stats["updated"],
+        )
+    except Exception as e:
+        logger.error("[Scheduler] Grid fusion failed: %s", e)
+
+
+async def _run_grid_ml_train():
+    from app.grid_ml.train import run_grid_training
+    try:
+        stats = await run_grid_training()
+        logger.info("[Scheduler] Grid ML train done — %s", stats)
+    except Exception as e:
+        logger.error("[Scheduler] Grid ML train failed: %s", e)
+
+
+async def _run_grid_ml_predict():
+    from app.grid_ml.predict import run_grid_prediction
+    try:
+        stats = await run_grid_prediction()
+        logger.info("[Scheduler] Grid ML predict done — %s", stats)
+    except Exception as e:
+        logger.error("[Scheduler] Grid ML predict failed: %s", e)
+
+
 def start_analytics_scheduler():
     """Khởi động scheduler. Gọi 1 lần trong app startup."""
     if os.environ.get("ANALYTICS_ENABLED", "true").lower() != "true":
@@ -223,14 +254,42 @@ def start_analytics_scheduler():
         replace_existing=True,
     )
 
+    # Grid fusion — 15 phút sau grid ingest (đủ thời gian ingest ~701 điểm xong)
+    fusion_cron = os.environ.get("GRID_FUSION_CRON", "20 */3 * * *")
+    scheduler.add_job(
+        _run_grid_fusion,
+        CronTrigger.from_crontab(fusion_cron),
+        id="grid_fusion",
+        replace_existing=True,
+    )
+
+    # Grid ML training — 04:45 mỗi ngày (sau các analytics khác). Internal-gated.
+    ml_train_cron = os.environ.get("GRID_ML_TRAIN_CRON", "45 4 * * *")
+    scheduler.add_job(
+        _run_grid_ml_train,
+        CronTrigger.from_crontab(ml_train_cron),
+        id="grid_ml_train",
+        replace_existing=True,
+    )
+
+    # Grid ML predict — phút 35 mỗi 3 giờ (sau fusion phút 20). Gated GRID_ML_ENABLED.
+    ml_predict_cron = os.environ.get("GRID_ML_PREDICT_CRON", "35 */3 * * *")
+    scheduler.add_job(
+        _run_grid_ml_predict,
+        CronTrigger.from_crontab(ml_predict_cron),
+        id="grid_ml_predict",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
         "Analytics scheduler started with %d jobs: "
         "summary=%s, anomaly=%s, prophet=%s, arima=%s, linear=%s, "
-        "seasonal=%s, correlation=%s, trend=%s, health=%s, grid=%s",
+        "seasonal=%s, correlation=%s, trend=%s, health=%s, grid=%s, fusion=%s",
         len(scheduler.get_jobs()),
         summary_cron, anomaly_cron, prophet_cron, arima_cron, linear_cron,
         seasonal_cron, correlation_cron, trend_cron, health_cron, grid_cron,
+        fusion_cron,
     )
 
 

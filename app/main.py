@@ -193,13 +193,75 @@ async def trigger_grid_refresh():
     """
     try:
         from app.grid_ingest.openmeteo_grid import run_grid_ingest
+        from app.grid_fusion.fuser import run_grid_fusion
         stats = await run_grid_ingest()
-        return {"ok": True, **stats}
+        fusion = await run_grid_fusion()
+        from app.analytics.router import invalidate_grid_cache
+        invalidate_grid_cache()
+        return {"ok": True, **stats, "fusion": fusion}
     except Exception as exc:
         import traceback
         traceback.print_exc()
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=f"Grid refresh failed: {exc!r}")
+
+
+@app.post("/api/v1/ops/grid/fuse")
+async def trigger_grid_fusion():
+    """
+    Force chạy fusion (IDW trạm thật + Open-Meteo) ngay, không chờ cron.
+    Dùng quan trắc grid mới nhất đã ingest; không gọi Open-Meteo nên nhanh (~1-2s).
+    Admin/operator role required (protected bởi protect_ops_request middleware).
+    """
+    try:
+        from app.grid_fusion.fuser import run_grid_fusion
+        stats = await run_grid_fusion()
+        from app.analytics.router import invalidate_grid_cache
+        invalidate_grid_cache()
+        return {"ok": True, **stats}
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Grid fusion failed: {exc!r}")
+
+
+@app.post("/api/v1/ops/grid/ml/train")
+async def trigger_grid_ml_train():
+    """
+    Train ML grid predictor + champion-challenger (plan §3.2/3.4).
+    Đọc quan trắc trạm thật, đánh giá CV theo trạm, promote nếu tốt hơn ≥5%.
+    Admin/operator role required.
+    """
+    try:
+        from app.grid_ml.train import run_grid_training
+        stats = await run_grid_training()
+        return {"ok": True, **stats}
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Grid ML train failed: {exc!r}")
+
+
+@app.post("/api/v1/ops/grid/ml/predict")
+async def trigger_grid_ml_predict():
+    """
+    Predict AQI cho mọi grid point bằng champion model (plan §3.3).
+    Gated GRID_ML_ENABLED — skip sạch nếu chưa bật / chưa có champion.
+    Admin/operator role required.
+    """
+    try:
+        from app.grid_ml.predict import run_grid_prediction
+        stats = await run_grid_prediction()
+        from app.analytics.router import invalidate_grid_cache
+        invalidate_grid_cache()
+        return {"ok": True, **stats}
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Grid ML predict failed: {exc!r}")
 
 
 @app.get("/api/v1/ops/grid/health")

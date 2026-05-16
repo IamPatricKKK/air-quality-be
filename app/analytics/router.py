@@ -7,6 +7,7 @@ Analytics: daily summary, anomaly, seasonal, correlation, trend, health impact
 """
 
 import logging
+import time
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -17,6 +18,16 @@ from app.db import fetch, fetchrow
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
+
+# In-memory TTL cache cho /grid/latest (plan §6.2 — không cần Redis cho đồ án).
+# Key = (bounds, province, max_age_hours); value = (expires_epoch, payload).
+_GRID_CACHE: dict[tuple, tuple[float, dict]] = {}
+_GRID_CACHE_TTL_SEC = 300  # 5 phút (khớp cron grid 3h + fusion → data đổi chậm)
+
+
+def invalidate_grid_cache() -> None:
+    """Xoá cache /grid/latest — gọi sau manual refresh/fuse/predict."""
+    _GRID_CACHE.clear()
 
 
 # ---------- Daily Summaries ----------
@@ -497,7 +508,14 @@ async def get_grid_latest(
     Trả AQI mới nhất cho mỗi grid point trong bounding box hoặc tỉnh.
     Mỗi grid point có 1 observation duy nhất (latest theo observed_at).
     Dùng cho FE để render heatmap surface phủ toàn VN.
+    Cache in-memory 5 phút theo (bounds, province, max_age_hours).
     """
+    cache_key = (bounds, province, max_age_hours)
+    now_epoch = time.monotonic()
+    cached = _GRID_CACHE.get(cache_key)
+    if cached and cached[0] > now_epoch:
+        return cached[1]
+
     where_clauses = ["g.is_active = TRUE", "g.is_land = TRUE"]
     params: list = []
 
@@ -564,7 +582,9 @@ async def get_grid_latest(
             "source_code": r["source_code"],
             "confidence_score": float(r["confidence_score"]) if r["confidence_score"] is not None else None,
         })
-    return {"count": len(out), "data": out}
+    payload = {"count": len(out), "data": out}
+    _GRID_CACHE[cache_key] = (now_epoch + _GRID_CACHE_TTL_SEC, payload)
+    return payload
 
 
 @router.get("/grid/stats")
