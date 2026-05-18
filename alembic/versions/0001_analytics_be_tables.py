@@ -25,6 +25,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # asyncpg dùng prepared statements → mỗi op.execute chỉ được 1 câu lệnh.
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS analytics.correlation_matrices (
@@ -39,8 +40,11 @@ def upgrade() -> None:
           CONSTRAINT uq_correlation_matrices_unique UNIQUE (station_id, analysis_date),
           CONSTRAINT fk_correlation_matrices_station_id_stations
             FOREIGN KEY (station_id) REFERENCES catalog.stations (id)
-        );
-
+        )
+        """
+    )
+    op.execute(
+        """
         CREATE TABLE IF NOT EXISTS analytics.health_impacts (
           id UUID DEFAULT gen_random_uuid() NOT NULL,
           station_id UUID NOT NULL,
@@ -63,8 +67,11 @@ def upgrade() -> None:
           CONSTRAINT uq_health_impacts_station_id UNIQUE (station_id),
           CONSTRAINT fk_health_impacts_station_id_stations
             FOREIGN KEY (station_id) REFERENCES catalog.stations (id)
-        );
-
+        )
+        """
+    )
+    op.execute(
+        """
         CREATE TABLE IF NOT EXISTS analytics.seasonal_patterns (
           id UUID DEFAULT gen_random_uuid() NOT NULL,
           station_id UUID NOT NULL,
@@ -84,8 +91,11 @@ def upgrade() -> None:
           CONSTRAINT uq_seasonal_patterns_unique UNIQUE (station_id, metric, analysis_date),
           CONSTRAINT fk_seasonal_patterns_station_id_stations
             FOREIGN KEY (station_id) REFERENCES catalog.stations (id)
-        );
-
+        )
+        """
+    )
+    op.execute(
+        """
         CREATE TABLE IF NOT EXISTS analytics.trend_analyses (
           id UUID DEFAULT gen_random_uuid() NOT NULL,
           station_id UUID NOT NULL,
@@ -98,17 +108,13 @@ def upgrade() -> None:
           CONSTRAINT uq_trend_analyses_unique UNIQUE (station_id, analysis_date),
           CONSTRAINT fk_trend_analyses_station_id_stations
             FOREIGN KEY (station_id) REFERENCES catalog.stations (id)
-        );
+        )
         """
     )
 
 
 def downgrade() -> None:
-    op.execute(
-        """
-        DROP TABLE IF EXISTS analytics.trend_analyses;
-        DROP TABLE IF EXISTS analytics.seasonal_patterns;
-        DROP TABLE IF EXISTS analytics.health_impacts;
-        DROP TABLE IF EXISTS analytics.correlation_matrices;
-        """
-    )
+    op.execute("DROP TABLE IF EXISTS analytics.trend_analyses")
+    op.execute("DROP TABLE IF EXISTS analytics.seasonal_patterns")
+    op.execute("DROP TABLE IF EXISTS analytics.health_impacts")
+    op.execute("DROP TABLE IF EXISTS analytics.correlation_matrices")
