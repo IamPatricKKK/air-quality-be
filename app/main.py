@@ -30,11 +30,19 @@ async def lifespan(application: FastAPI):
     stop_analytics_scheduler()
 
 
+def get_cors_origins() -> list[str]:
+    raw = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://localhost:5174,http://localhost:4173",
+    )
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
 app = FastAPI(title="air-quality-be", version="0.2.0", lifespan=lifespan)
 app.include_router(analytics_router)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

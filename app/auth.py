@@ -127,11 +127,22 @@ async def verify_access_token(token: str) -> Dict[str, Any]:
         raise ValueError("Invalid token") from exc
 
 
+def _requires_auth(method: str, path: str) -> bool:
+    # /api/v1/ops/*: toàn bộ (đã luôn được bảo vệ).
+    if path.startswith("/api/v1/ops"):
+        return True
+    # /api/v1/analytics/run/*: các POST kích job nặng (forecast/train/...).
+    # GET analytics còn lại là read-only phục vụ dashboard nên để công khai.
+    if method == "POST" and path.startswith("/api/v1/analytics/run"):
+        return True
+    return False
+
+
 async def protect_ops_request(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    if not request.url.path.startswith("/api/v1/ops"):
+    if not _requires_auth(request.method, request.url.path):
         return await call_next(request)
 
     try:

@@ -7,6 +7,10 @@ migration nào tạo bảng → các job seasonal/correlation/trend/health_impac
 ghi vào bảng không tồn tại và fail. create_all(checkfirst=True) chỉ tạo
 bảng còn thiếu, KHÔNG đụng bảng đã có (daily_summaries, anomalies,
 grid_aqi_observations...).
+
+Nguồn DDL chính thức nay là Alembic migration
+`alembic/versions/0001_analytics_be_tables.py` (`make migration-up`).
+Hàm này chỉ còn là lưới an toàn runtime cho môi trường chưa chạy migration.
 """
 
 from __future__ import annotations
